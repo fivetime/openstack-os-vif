@@ -79,6 +79,8 @@ class LinuxNetTest(testtools.TestCase):
         linux_net._disable_ipv6("br0")
         mock_exists.assert_called_once_with(exists_path)
         mock_open.assert_called_once_with(exists_path, 'w')
+        handle = mock_open.return_value.__enter__.return_value
+        handle.write.assert_called_once_with('1')
 
     @mock.patch.object(os.path, 'exists', return_value=True)
     @mock.patch('builtins.open')
@@ -434,10 +436,28 @@ class LinuxNetTest(testtools.TestCase):
         calls.attach_mock(mock_disable_ipv6, "disable_ipv6")
         calls.attach_mock(mock_set, "set")
 
-        linux_net.create_tap("tap0", 1500, "aa:bb:cc:dd:ee:ff")
+        for multiqueue in (False, True):
+            with self.subTest(multiqueue=multiqueue):
+                calls.reset_mock()
+                linux_net.create_tap("tap0", 1500, "aa:bb:cc:dd:ee:ff",
+                                     multiqueue=multiqueue)
+                names = [c[0] for c in calls.mock_calls]
+                self.assertEqual(["add", "disable_ipv6", "set"], names)
 
-        names = [c[0] for c in calls.mock_calls]
-        self.assertEqual(["add", "disable_ipv6", "set"], names)
+    @mock.patch.object(linux_net, "_disable_ipv6", side_effect=OSError)
+    @mock.patch.object(linux_net, "_update_device_mtu")
+    @mock.patch.object(ip_lib, "set")
+    @mock.patch.object(ip_lib, "add")
+    def test_create_tap_disable_ipv6_failure(self, mock_add, mock_set,
+                                            mock_update_mtu,
+                                            mock_disable_ipv6):
+        self.assertRaises(OSError, linux_net.create_tap,
+                          "tap0", 1500, "aa:bb:cc:dd:ee:ff")
+
+        mock_add.assert_called_once()
+        mock_disable_ipv6.assert_called_once_with("tap0")
+        mock_set.assert_not_called()
+        mock_update_mtu.assert_not_called()
 
     @mock.patch.object(linux_net, "_disable_ipv6")
     @mock.patch.object(linux_net, "_update_device_mtu")
@@ -456,6 +476,7 @@ class LinuxNetTest(testtools.TestCase):
                                          address="aa:bb:cc:dd:ee:ff",
                                          check_exit_code=[0, 2, 254])
         mock_update_mtu.assert_called_once_with("tap0", 1500)
+        mock_disable_ipv6.assert_called_once_with("tap0")
 
     @mock.patch.object(linux_net, "_disable_ipv6")
     @mock.patch.object(linux_net, "_update_device_mtu")
@@ -469,3 +490,4 @@ class LinuxNetTest(testtools.TestCase):
         mock_add.assert_called_once()
         mock_set.assert_called_once()
         mock_update_mtu.assert_called_once_with("tap0", None)
+        mock_disable_ipv6.assert_called_once_with("tap0")
